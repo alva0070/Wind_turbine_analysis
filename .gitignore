@@ -1,0 +1,36 @@
+# MATLAB temporary and backup files
+*.asv
+*.m~
+*.fig~
+*~
+*.bak
+
+# MATLAB autosave files
+*.autosave
+
+# SImulink autosave/backup files
+slprj/
+sccprj/
+work/
+
+# MATLAB codegen folders
+codegen/
+*.mex*
+
+# Logs and output
+*.log
+*.out
+*.err
+
+# Data files generated during simulations
+*.mat
+*.csv
+*.txt
+
+# Figures and outputs
+figures/
+output/
+
+# OS-Specific
+.DS_Store
+Thumbs.db
