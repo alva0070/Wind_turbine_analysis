@@ -1,0 +1,130 @@
+%% =====================================================
+%%                 MODELING PROJECT 2 
+%% =====================================================
+clc;
+%% -------- INITIAL VALUES FOR THE TURBINE ------------
+Power = 2.5e6;             % rated power [W]
+Blade_Rad = 48;            % blade radius [m]
+Hub_H = 80.4;              % hub height [m]
+Cut_In_Speed = 4;          % cut-in speed [m/s]
+Rated_speed = 11;          % rated speed [m/s]
+Cut_out_speed = 25;        % cut-out speed [m/s]
+Rotor_speed = 11.2;        % rotor speed [RPM] (ranges between 9.6 - 15.5)
+
+%% -------- WIND PARAMETERS ------------
+U = 10;                    % wind velocity [m/s]
+Rot_vel = 14;              % rotation velocity of the wind [m/s]
+Pitch_Ang = 0;             % pitch angle [rad]
+Swept_Area = pi * (Blade_Rad)^2;  % swept area of the blade [m^2]
+
+%% -------- MATERIAL PROPERTIES ------------
+% Properties of air
+Den_air = 1.1;             % density of air [kg/m^3]
+vis_air = 1.8e-5;          % viscosity of air [N·s/m^2]
+
+% Properties of steel (ASTM A572, Grade 50)
+Den_steel = 7850;          % density of steel [kg/m^3]
+Ten_strength = 450;        % tensile strength [MPa]
+Yield_strength = 345;      % yield strength [MPa]
+
+%% =====================================================
+%%                    MAIN SECTION
+%% =====================================================
+
+% -------- READ BLADE TWIST DATA FROM CSV ------------
+BladeData = readtable('BladeProfile.csv');      % reads the CSV with headers
+Blade_Twist = deg2rad(BladeData.BladeTwist);    % convert from degrees to radians
+
+% -------- INPUT: BLADE ANGLE ------------
+Blade_Angle_pitch = deg2rad(10);                % user input in degrees which gets converted
+
+% -------- DERIVED TURBINE PARAMETERS ------------
+lambda = (Rot_vel * Blade_Rad) / U;             % tip speed ratio
+Rad_pos = linspace(0, Blade_Rad,500);           % radial positions [m]
+lambda_r = (lambda * Rad_pos) / Blade_Rad;      % local tip speed ratio
+
+% -------- AXIAL INDUCTION & SECTION PITCH ------------
+Axial_I = 1/3;                                  % axial induction factor (a)
+Sec_pitch = Blade_Twist + Blade_Angle_pitch;    % section pitch angle [rad]
+
+%% =====================================================
+%%               INTERPOLATION FIX (OPTION 1)
+%% =====================================================
+Rad_pos_data = linspace(0, Blade_Rad, length(Blade_Twist)); % positions from BladeProfile data
+Sec_pitch_interp = interp1(Rad_pos_data, Sec_pitch, Rad_pos, 'linear', 'extrap');
+
+%% =====================================================
+%%               FUNCTION CALLS SECTION
+%% =====================================================
+
+% Calculate angular induction factor (a')
+Angular_I = Calculate_Angular_I(lambda_r, Axial_I);
+
+% Calculate relative velocity, angle of attack, and angles
+[Rel_vel, A0A, theta, Ang_Rel_Wind] = Calculate_Turbine(U, Axial_I, Angular_I, Rad_pos, Rot_vel, Sec_pitch_interp);
+
+%% =====================================================
+%%          AIRFOIL DATA LOADING & MATCHING
+%% =====================================================
+
+% --- Extract the airfoil IDs (e.g., 'DUXX-WX-180' → '180') ---
+AirfoilNames = BladeData.Airfoil;   % csv has column named airfoil
+AirfoilIDs = regexp(AirfoilNames, '(\d{3})$', 'match', 'once');  % extract everything after last '-'
+
+% --- Define folder where your .dat files are stored ---
+dataFolder = 'C:\Users\alvap\OneDrive\Desktop\Project_Wind_Turbine\AirfoilData';   % folder must contain 180.dat, 210.dat, 250.dat, 300.dat
+
+% --- Initialize result arrays ---
+Cl_values = zeros(size(A0A));
+Cd_values = zeros(size(A0A));
+
+% --- Loop through each blade section ---
+for i = 1:length(A0A)
+    ID = AirfoilIDs{i};  % Get airfoil ID for this section (e.g., '180')
+    fileName = fullfile(dataFolder, [ID '.dat']);
+
+    % Read airfoil data (AoA, Cl, Cd)
+    airfoilData = readmatrix(fileName);
+    AoA_col = airfoilData(:, 1);  % angle of attack [deg]
+    Cl_col  = airfoilData(:, 2);  % lift coefficient
+    Cd_col  = airfoilData(:, 3);  % drag coefficient
+
+    % Convert A0A from radians to degrees for comparison
+    A0A_deg = rad2deg(A0A(i));
+
+    % Interpolate Cl and Cd for this angle of attack
+    Cl_values(i) = interp1(AoA_col, Cl_col, A0A_deg, 'linear', 'extrap');
+    Cd_values(i) = interp1(AoA_col, Cd_col, A0A_deg, 'linear', 'extrap');
+end
+
+% --- Store results in a structured format ---
+AirfoilResults = table(Rad_pos', A0A', Cl_values', Cd_values', AirfoilIDs, ...
+    'VariableNames', {'RadialPosition_m', 'AngleOfAttack_rad', 'Cl', 'Cd', 'AirfoilID'});
+
+%% -------- COEFFICIENT OF POWER CALCULATION ------------
+%Note: Replace Work and Wind_vel with defined variables later if needed.
+% Coeff_of_power = Work / (0.5 * Den_air * Swept_Area * (Wind_vel)^3);
+
+%% =====================================================
+%%               FUNCTION DEFINITIONS
+%% =====================================================
+
+%% -------- Function calculates Angle of Attack ----------------
+function [Rel_vel, A0A, theta, Ang_Rel_Wind] = Calculate_Turbine(U, Axial_I, Angular_I, Rad_pos, Rot_Vel, Sec_pitch)
+    % Calculate the relative velocity magnitude
+    Rel_vel = sqrt((U .* (1 - Axial_I)).^2 + (Rad_pos .* Rot_Vel .* (1 + Angular_I)).^2);
+
+    % Flow angle between rotor plane and relative wind
+    theta = atan((Rad_pos .* Rot_Vel .* (1 + Angular_I)) ./ (U .* (1 - Axial_I)));
+
+    % Angle between relative wind and chord line
+    Ang_Rel_Wind = (pi / 2) - theta;
+
+    % Angle of attack
+    A0A = Ang_Rel_Wind - Sec_pitch;
+end
+
+%% -------- Function: Calculate_Angular_I ----------------
+function Angular_I = Calculate_Angular_I(lambda_r, Axial_I)
+    Angular_I = -0.5 + (0.5 * sqrt(1 + (4 ./ (lambda_r.^2)) .* Axial_I .* (1 - Axial_I)));
+end
